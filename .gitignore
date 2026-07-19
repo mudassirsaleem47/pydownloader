@@ -1,0 +1,27 @@
+# PyInstaller build directories
+build/
+dist/
+
+# PyInstaller Spec files
+*.spec
+
+# Local FFmpeg binaries
+ffmpeg.exe
+ffprobe.exe
+
+# Compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local configuration and virtual environments
+.venv/
+venv/
+ENV/
+.env
+
+# Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
