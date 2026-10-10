@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTubeDownloader - Download YouTube videos on Windows</title>
+<meta name="description" content="A lightweight Windows app with a Chrome/Edge extension to download YouTube videos in MP4, MOV or MP3.">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #111827; --muted: #6b7280; --card: #f3f4f6;
+    --accent: #2563eb; --accent-fg: #ffffff; --border: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1115; --fg: #f3f4f6; --muted: #9ca3af; --card: #181b22; --accent: #3b82f6; --border: #262a33; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+  header { padding: 20px 0; display: flex; align-items: center; gap: 10px; font-weight: 700; }
+  header img { width: 32px; height: 32px; }
+  .hero { text-align: center; padding: 56px 0 40px; }
+  .hero img { width: 96px; height: 96px; }
+  h1 { font-size: clamp(2rem, 6vw, 3rem); margin: 16px 0 8px; line-height: 1.15; }
+  .hero p { color: var(--muted); font-size: 1.1rem; max-width: 560px; margin: 0 auto 28px; }
+  .btn { display: inline-block; background: var(--accent); color: var(--accent-fg); padding: 14px 28px; border-radius: 10px; font-weight: 600; text-decoration: none; }
+  .btn:hover { opacity: .9; }
+  .small { color: var(--muted); font-size: .85rem; margin-top: 10px; }
+  section { padding: 36px 0; }
+  h2 { font-size: 1.5rem; margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+  ol { padding-left: 20px; }
+  ol li { margin-bottom: 10px; }
+  code { background: var(--card); border: 1px solid var(--border); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+  footer { border-top: 1px solid var(--border); padding: 24px 0 40px; color: var(--muted); font-size: .9rem; text-align: center; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><img src="icon.png" alt=""> YouTubeDownloader</header>
+
+  <div class="hero">
+    <img src="icon.png" alt="YouTubeDownloader icon">
+    <h1>Download YouTube videos in one click</h1>
+    <p>A lightweight Windows app with a Chrome &amp; Edge extension. Save videos as MP4, MOV or MP3 in the best quality available.</p>
+    <a class="btn" href="https://github.com/mudassirsaleem47/pydownloader/releases/latest">Download for Windows</a>
+    <div class="small">Windows 10/11 &middot; Free &middot; No admin rights needed</div>
+  </div>
+
+  <section>
+    <h2>Features</h2>
+    <div class="grid">
+      <div class="card"><h3>Best quality</h3><p>Downloads the highest resolution available, or pick 1080p / 720p.</p></div>
+      <div class="card"><h3>MP4, MOV &amp; MP3</h3><p>Save video or extract audio only. FFmpeg is bundled, nothing else to install.</p></div>
+      <div class="card"><h3>Browser button</h3><p>A download overlay appears right inside the YouTube player.</p></div>
+      <div class="card"><h3>Multiple downloads</h3><p>Run several downloads at once with speed, ETA and cancel for each.</p></div>
+      <div class="card"><h3>Taskbar progress</h3><p>See overall progress on the Windows taskbar icon.</p></div>
+      <div class="card"><h3>Easy uninstall</h3><p>Listed in Windows Apps &amp; Features with a clean uninstaller.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How to install</h2>
+    <ol>
+      <li>Download <code>youtubedownloader_setup.exe</code> and run it. If Windows SmartScreen warns you, click <b>More info &rarr; Run anyway</b>.</li>
+      <li>Choose an install folder and click <b>Install</b>.</li>
+      <li>When asked about the browser extension, click <b>Yes</b>, turn on <b>Developer mode</b>, then click <b>Load unpacked</b> and select the <code>extension</code> folder.</li>
+      <li>Open any YouTube video and click <b>MP4</b>, <b>MOV</b> or <b>MP3</b> on the player.</li>
+    </ol>
+  </section>
+
+  <footer>
+    Made by <b>mudassir developer</b> &middot;
+    <a href="https://github.com/mudassirsaleem47/pydownloader">Source on GitHub</a><br>
+    For personal and educational use. Please respect YouTube's Terms of Service and creators' copyright.
+  </footer>
+</div>
+</body>
+</html>
