@@ -1,6 +1,8 @@
 import os
 import sys
 import shutil
+import re
+import queue
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -163,8 +165,48 @@ def get_ffmpeg_path():
             for root, dirs, files in os.walk(winget_pkgs):
                 if "ffmpeg.exe" in files:
                     return os.path.normpath(os.path.join(root, "ffmpeg.exe"))
-                    
+
+    # 4. Bundled binary from the imageio-ffmpeg package (pip install imageio-ffmpeg)
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            return os.path.normpath(exe)
+    except Exception:
+        pass
+
     return None
+
+
+class DownloadCancelled(Exception):
+    pass
+
+
+class QuietLogger:
+    """yt-dlp logger that swallows output (stdout/stderr are None in --noconsole builds)."""
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
+
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def clean_error(e):
+    msg = ANSI_RE.sub('', str(e)).strip()
+    msg = msg.split('\n')[0]
+    if msg.startswith('ERROR:'):
+        msg = msg[len('ERROR:'):].strip()
+    return msg or "Unknown error"
+
+
+def get_hwnd(widget):
+    # winfo_id() is the inner child window; the taskbar needs the top-level window
+    try:
+        return ctypes.windll.user32.GetParent(widget.winfo_id()) or widget.winfo_id()
+    except Exception:
+        return widget.winfo_id()
 
 
 # --- Scrollable Frame Helper for Multiple Downloads List ---
@@ -189,6 +231,13 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
+        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", self._on_mousewheel))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+
+    def _on_mousewheel(self, event):
+        if self.scrollable_frame.winfo_reqheight() > self.canvas.winfo_height():
+            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
 
 # --- Download Progress Row Widget ---
 class DownloadProgressRow(ttk.Frame):
@@ -199,6 +248,8 @@ class DownloadProgressRow(ttk.Frame):
         self.on_cancel_callback = on_cancel_callback
         self.should_cancel = False
         self.percent = 0
+        self.files = set()
+        self.title_set = False
 
         # Grid setup
         self.columnconfigure(0, weight=1)
@@ -213,7 +264,7 @@ class DownloadProgressRow(ttk.Frame):
         self.progress_bar.grid(row=1, column=0, sticky="we", columnspan=2, pady=(0, 2))
         
         # Stats & Cancel button row
-        self.stats_label = ttk.Label(self, text="Fetching details...", font=("Arial", 8))
+        self.stats_label = ttk.Label(self, text="Fetching details...", font=("Arial", 8), wraplength=400, justify="left")
         self.stats_label.grid(row=2, column=0, sticky="w")
         
         self.cancel_btn = ttk.Button(self, text="Cancel", width=8, command=self.cancel)
@@ -243,8 +294,8 @@ class YoutubeDownloaderApp(tk.Tk):
 
         # Configure window
         self.title("YouTubeDownloader - by mudassir developer")
-        self.geometry("540x440")
-        self.resizable(False, False)
+        self.geometry("560x470")
+        self.minsize(560, 470)
 
         # Set window icon safely
         try:
@@ -266,6 +317,9 @@ class YoutubeDownloaderApp(tk.Tk):
         self.download_dir = tk.StringVar(value=os.path.join(os.path.expanduser('~'), 'Downloads'))
         self.quality_var = tk.StringVar(value="Best Quality (MP4)")
         
+        # Thread -> UI call queue (Tkinter is not thread-safe)
+        self.ui_queue = queue.Queue()
+
         # Multiple downloads tracking
         self.download_counter = 0
         self.active_downloads = {}
@@ -275,8 +329,25 @@ class YoutubeDownloaderApp(tk.Tk):
         # Startup auto-paste
         self.after(100, self.auto_paste_clipboard)
 
+        self.after(50, self.process_ui_queue)
+
         # Start HTTP Server thread
         threading.Thread(target=self.start_http_server, daemon=True).start()
+
+    def call_ui(self, fn, *args):
+        self.ui_queue.put((fn, args))
+
+    def process_ui_queue(self):
+        try:
+            while True:
+                fn, args = self.ui_queue.get_nowait()
+                try:
+                    fn(*args)
+                except Exception:
+                    pass
+        except queue.Empty:
+            pass
+        self.after(50, self.process_ui_queue)
 
     def register_system_settings(self):
         # 1. Register custom youtubedownloader:// protocol
@@ -340,9 +411,15 @@ class YoutubeDownloaderApp(tk.Tk):
             self.httpd.serve_forever()
         except Exception as e:
             print(f"Error starting local HTTP server: {e}")
+            self.call_ui(
+                messagebox.showwarning,
+                "Browser integration unavailable",
+                "Could not start the local server on port 30121 (another program may be using it).\n"
+                "Downloads from the app window still work, but the browser extension buttons won't."
+            )
 
     def trigger_remote_download(self, url, quality):
-        self.after(0, lambda: self.process_remote_download(url, quality))
+        self.call_ui(self.process_remote_download, url, quality)
 
     def process_remote_download(self, url, quality):
         # Focus window
@@ -461,11 +538,7 @@ class YoutubeDownloaderApp(tk.Tk):
     def open_downloads_folder(self):
         folder = self.download_dir.get()
         if os.path.exists(folder):
-            if sys.platform == 'win32':
-                os.startfile(folder)
-            else:
-                import subprocess
-                subprocess.Popen(['xdg-open' if sys.platform != 'darwin' else 'open', folder])
+            os.startfile(folder)
         else:
             messagebox.showerror("Error", "The save directory does not exist yet.")
 
@@ -510,9 +583,16 @@ class YoutubeDownloaderApp(tk.Tk):
         ydl_opts = {
             'outtmpl': os.path.join(outdir, '%(title)s.%(ext)s'),
             'progress_hooks': [lambda d: self.yt_progress_hook(d, row)],
-            'noplaylist': True,
-            'nocheckcertificate': True,
+            'logger': QuietLogger(),
+            'quiet': True,
             'no_warnings': True,
+            'noprogress': True,
+            'noplaylist': True,
+            'windowsfilenames': True,
+            'retries': 10,
+            'fragment_retries': 10,
+            'extractor_retries': 3,
+            'concurrent_fragment_downloads': 4,
             'rm_cache_dir': True,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -525,52 +605,80 @@ class YoutubeDownloaderApp(tk.Tk):
         # Auto-configure FFmpeg location
         ffmpeg_bin = get_ffmpeg_path()
         if ffmpeg_bin:
-            ydl_opts['ffmpeg_location'] = os.path.dirname(ffmpeg_bin)
-
-        # Quality parsing
-        if quality == "Best Quality (MP4)":
-            ydl_opts['format'] = 'bestvideo[vcodec^=avc]+bestaudio[ext=m4a]/best[vcodec^=avc]/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif quality == "Best Quality (MOV)":
-            ydl_opts['format'] = 'bestvideo[vcodec^=avc]+bestaudio[ext=m4a]/best[vcodec^=avc]/best'
-            ydl_opts['merge_output_format'] = 'mov'
-        elif quality == "1080p (MP4)":
-            ydl_opts['format'] = 'bestvideo[height<=1080][vcodec^=avc]+bestaudio[ext=m4a]/best[height<=1080][vcodec^=avc]/best[height<=1080]'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif quality == "720p (MP4)":
-            ydl_opts['format'] = 'bestvideo[height<=720][vcodec^=avc]+bestaudio[ext=m4a]/best[height<=720][vcodec^=avc]/best[height<=720]'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif quality == "Audio Only (MP3)":
-            ydl_opts['format'] = 'bestaudio/best'
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
+            ydl_opts['ffmpeg_location'] = ffmpeg_bin
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Fetch video info to get correct title
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'Video')
-                
-                # Update title in GUI safely
-                self.after(0, lambda: self.update_row_title(row, title))
+            if not ffmpeg_bin and quality == "Audio Only (MP3)":
+                raise Exception("FFmpeg not found - it is required for MP3 conversion")
 
-                if row.should_cancel:
-                    raise Exception("CANCEL_SIGNAL")
+            if not ffmpeg_bin:
+                # Without FFmpeg streams can't be merged: fall back to single-file formats
+                ydl_opts['format'] = 'b[height<=720][ext=mp4]/b[height<=720]/b'
+            elif quality == "Best Quality (MP4)":
+                # Highest resolution available, preferring MP4/M4A-compatible streams
+                ydl_opts['format'] = 'bv*+ba/b'
+                ydl_opts['format_sort'] = ['res', 'ext:mp4:m4a']
+                ydl_opts['merge_output_format'] = 'mp4'
+            elif quality == "Best Quality (MOV)":
+                # H.264/AAC keeps MOV files widely playable
+                ydl_opts['format'] = 'bv*[vcodec^=avc]+ba[ext=m4a]/bv*+ba/b'
+                ydl_opts['format_sort'] = ['res', 'vcodec:h264', 'acodec:aac']
+                ydl_opts['merge_output_format'] = 'mov'
+            elif quality == "1080p (MP4)":
+                ydl_opts['format'] = 'bv*[height<=1080]+ba/b[height<=1080]/b'
+                ydl_opts['format_sort'] = ['res', 'ext:mp4:m4a']
+                ydl_opts['merge_output_format'] = 'mp4'
+            elif quality == "720p (MP4)":
+                ydl_opts['format'] = 'bv*[height<=720]+ba/b[height<=720]/b'
+                ydl_opts['format_sort'] = ['res', 'ext:mp4:m4a']
+                ydl_opts['merge_output_format'] = 'mp4'
+            elif quality == "Audio Only (MP3)":
+                ydl_opts['format'] = 'bestaudio/best'
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }]
 
-                # Perform download
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.extract_info(url, download=True)
+            except Exception as first_err:
+                # Merging unavailable (broken/missing FFmpeg): retry with a single-file format
+                if 'merg' in str(first_err).lower() and quality != "Audio Only (MP3)" and not row.should_cancel:
+                    for key in ('format_sort', 'merge_output_format'):
+                        ydl_opts.pop(key, None)
+                    ydl_opts['format'] = 'b[height<=720][ext=mp4]/b[height<=720]/b'
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.extract_info(url, download=True)
+                else:
+                    raise
 
-                if row.should_cancel:
-                    raise Exception("CANCEL_SIGNAL")
+            if row.should_cancel:
+                raise DownloadCancelled()
 
-                # Finish
-                self.after(0, lambda: self.on_download_row_success(download_id, row))
+            self.call_ui(self.on_download_row_success, download_id, row)
         except Exception as e:
-            err_msg = str(e).split('\n')[0]
-            self.after(0, lambda: self.on_download_row_error(download_id, row, err_msg))
+            if row.should_cancel or isinstance(e, DownloadCancelled):
+                self.cleanup_partial_files(row)
+                self.call_ui(self.on_download_row_error, download_id, row, "CANCEL_SIGNAL")
+            else:
+                self.call_ui(self.on_download_row_error, download_id, row, clean_error(e))
+
+    def cleanup_partial_files(self, row):
+        for path in list(row.files):
+            for suffix in (".part", ".ytdl"):
+                try:
+                    f = path + suffix
+                    if os.path.isfile(f):
+                        os.remove(f)
+                except OSError:
+                    pass
+            if path.endswith(".part") and os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     def update_row_title(self, row, title):
         display_title = title[:50] + "..." if len(title) > 53 else title
@@ -578,7 +686,17 @@ class YoutubeDownloaderApp(tk.Tk):
 
     def yt_progress_hook(self, d, row):
         if row.should_cancel:
-            raise ValueError("CANCEL_SIGNAL")
+            raise DownloadCancelled()
+
+        filename = d.get('filename') or d.get('tmpfilename')
+        if filename:
+            row.files.add(filename)
+
+        if not row.title_set:
+            title = (d.get('info_dict') or {}).get('title')
+            if title:
+                row.title_set = True
+                self.call_ui(self.update_row_title, row, title)
 
         if d['status'] == 'downloading':
             total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
@@ -588,8 +706,8 @@ class YoutubeDownloaderApp(tk.Tk):
 
             percent = 0.0
             if total > 0:
-                percent = downloaded / total
-            
+                percent = min(downloaded / total, 1.0)
+
             # Format speed
             if speed > 1024 * 1024:
                 speed_str = f"{speed / (1024 * 1024):.1f} MB/s"
@@ -607,12 +725,11 @@ class YoutubeDownloaderApp(tk.Tk):
 
             percent_display = int(percent * 100)
             stats_text = f"{percent_display}% • {speed_str} • {eta_str}"
-            
-            # Update UI row and overall taskbar progress
-            self.after(0, lambda: self.update_row_progress_ui(row, percent_display, stats_text))
+
+            self.call_ui(self.update_row_progress_ui, row, percent_display, stats_text)
 
         elif d['status'] == 'finished':
-            self.after(0, lambda: self.update_row_progress_ui(row, 100, "Post-processing..."))
+            self.call_ui(self.update_row_progress_ui, row, 100, "Processing...")
 
     def update_row_progress_ui(self, row, percent, stats_text):
         row.update_progress(percent, stats_text)
@@ -620,13 +737,13 @@ class YoutubeDownloaderApp(tk.Tk):
 
     def update_taskbar_overall(self):
         if not self.active_downloads:
-            set_taskbar_progress_state(self.winfo_id(), 0) # Clear
+            set_taskbar_progress_state(get_hwnd(self), 0) # Clear
             return
             
         total_percent = sum(row.percent for row in self.active_downloads.values())
         avg_percent = total_percent / len(self.active_downloads)
         
-        set_taskbar_progress(self.winfo_id(), int(avg_percent), 100)
+        set_taskbar_progress(get_hwnd(self), int(avg_percent), 100)
 
     def on_download_row_success(self, download_id, row):
         row.update_progress(100, "Completed!")
@@ -638,10 +755,10 @@ class YoutubeDownloaderApp(tk.Tk):
         self.update_taskbar_overall()
 
     def on_download_row_error(self, download_id, row, err_msg):
-        if "CANCEL_SIGNAL" in err_msg or "cancelled" in err_msg.lower():
+        if err_msg == "CANCEL_SIGNAL":
             row.update_progress(0, "Cancelled")
         else:
-            row.update_progress(0, f"Error: {err_msg[:30]}")
+            row.update_progress(0, f"Error: {err_msg[:150]}")
             
         row.cancel_btn.configure(text="Dismiss", command=lambda: self.dismiss_row(download_id, row), state="normal")
         
@@ -672,20 +789,13 @@ def check_single_instance_and_send(url, quality):
     return False
 
 def parse_protocol_args(arg):
-    import urllib.parse
+    # Tolerates variants like youtubedownloader://download?url=..., youtubedownloader://download/?url=...
     try:
-        if arg.startswith("youtubedownloader://"):
-            raw_query = arg[len("youtubedownloader://"):]
-            if raw_query.startswith("download"):
-                raw_query = raw_query[len("download"):]
-            if raw_query.startswith("?"):
-                raw_query = raw_query[1:]
-            
-            query = urllib.parse.parse_qs(raw_query)
-            url_list = query.get('url')
-            quality_list = query.get('quality')
-            url = url_list[0] if url_list else None
-            quality = quality_list[0] if quality_list else None
+        arg = arg.strip().strip('"')
+        if arg.lower().startswith("youtubedownloader:"):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(arg).query)
+            url = (query.get('url') or [None])[0]
+            quality = (query.get('quality') or [None])[0]
             return url, quality
     except Exception:
         pass
@@ -712,6 +822,6 @@ if __name__ == "__main__":
     app.register_system_settings()
     
     if url_to_download:
-        app.after(1500, lambda: app.process_remote_download(url_to_download, quality_to_download))
+        app.after(1500, lambda: app.process_remote_download(url_to_download, quality_to_download or "Best Quality (MP4)"))
         
     app.mainloop()

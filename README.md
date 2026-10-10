@@ -44,6 +44,8 @@ Developed by **mudassir developer**.
 If you want to modify or compile the project from source:
 
 ### Prerequisites
+- `pip install -r requirements.txt`
+- Place `ffmpeg.exe` and `ffprobe.exe` next to `app.py` (needed for merging video+audio and MP3).
 - Python 3.10+
 - PyInstaller (`pip install pyinstaller`)
 - Pillow (`pip install Pillow`)
@@ -58,14 +60,21 @@ If you make modifications to the code, compile the application using PyInstaller
 #### 1. Compile the Main Application
 Generates the core background downloader without a console prompt:
 ```bash
-python -m PyInstaller --noconsole --onefile --icon=icon.ico --add-data "icon.ico;." --name=youtubedownloader app.py
+python -m PyInstaller --noconsole --onefile --icon=icon.ico --add-data "icon.ico;." --collect-all imageio_ffmpeg --name=youtubedownloader app.py
 ```
 
 #### 2. Compile the Setup Wizard
 Bundles the core executable, the extension assets, the icon, and the FFmpeg files into a single installer:
 ```bash
-python -m PyInstaller --onefile --noconsole --name=youtubedownloader_setup --icon=icon.ico --add-data "dist/youtubedownloader.exe;." --add-data "extension;extension" --add-data "icon.ico;." --add-data "ffmpeg.exe;." --add-data "ffprobe.exe;." installer.py
+python -m PyInstaller --onefile --noconsole --name=youtubedownloader_setup --icon=icon.ico --add-data "dist/youtubedownloader.exe;." --add-data "extension;extension" --add-data "icon.ico;." installer.py
 ```
+
+---
+
+## Notes
+
+- Only the single video is downloaded, even if the URL belongs to a playlist (`noplaylist`).
+- "Best Quality" picks the highest resolution available (up to 4K/8K); 1080p/720p cap the height. Without FFmpeg the app falls back to single-file formats (max 720p).
 
 ---
 

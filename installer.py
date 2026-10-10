@@ -4,6 +4,20 @@ import shutil
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import winreg
+import ctypes
+import subprocess
+
+
+def get_desktop_dir():
+    # Works with OneDrive-redirected and localized Desktop folders
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf) == 0 and buf.value:
+            return buf.value
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
 
 def run_uninstall():
     # Create background Tk window for dialogs
@@ -51,8 +65,7 @@ def run_uninstall():
             
         # 5. Delete Desktop Shortcut
         try:
-            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-            shortcut_path = os.path.join(desktop, "YouTubeDownloader.lnk")
+            shortcut_path = os.path.join(get_desktop_dir(), "YouTubeDownloader.lnk")
             if os.path.exists(shortcut_path):
                 os.remove(shortcut_path)
         except Exception:
@@ -63,20 +76,48 @@ def run_uninstall():
         
         messagebox.showinfo("Uninstall Complete", "YouTubeDownloader has been successfully removed from your computer.")
         
-        # Self-deletion batch file routine (deletes files after the installer process exits)
+        # Self-deletion batch: removes only our own files, never the whole folder
         batch_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), "uninstall_cleanup.bat")
         with open(batch_path, "w") as f:
             f.write("@echo off\n")
-            f.write("timeout /t 1 /nobreak > nul\n")
-            f.write(f'rmdir /s /q "{dest_dir}"\n')
-            f.write(f'del "{batch_path}"\n')
-        
-        import subprocess
-        subprocess.Popen(["cmd.exe", "/c", batch_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        
+            f.write("ping 127.0.0.1 -n 3 > nul\n")
+            for name in ["youtubedownloader.exe", "youtubedownloader_setup.exe",
+                         "ffmpeg.exe", "ffprobe.exe", "icon.ico"]:
+                f.write(f'del /f /q "{os.path.join(dest_dir, name)}"\n')
+            f.write(f'rmdir /s /q "{os.path.join(dest_dir, "extension")}"\n')
+            f.write(f'rmdir "{dest_dir}"\n')  # only succeeds if the folder is now empty
+            f.write('del "%~f0"\n')
+
+        subprocess.Popen(["cmd.exe", "/c", batch_path], creationflags=subprocess.CREATE_NO_WINDOW)
+
     except Exception as e:
         messagebox.showerror("Error", f"Uninstall failed:\n{e}")
     sys.exit(0)
+
+
+def find_browser(name):
+    """Return the path of chrome.exe / msedge.exe from the App Paths registry, or None."""
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{name}") as key:
+                path = winreg.QueryValue(key, None)
+                if path and os.path.exists(path):
+                    return path
+        except OSError:
+            pass
+    return None
+
+
+def open_extension_setup(ext_dir):
+    """Open the browser's extensions page and the extension folder for a one-time 'Load unpacked'."""
+    browser = find_browser("chrome.exe")
+    page = "chrome://extensions"
+    if not browser:
+        browser = find_browser("msedge.exe")
+        page = "edge://extensions"
+    if browser:
+        subprocess.Popen([browser, page])
+    os.startfile(ext_dir)
 
 
 class SetupWizard(tk.Tk):
@@ -232,7 +273,16 @@ class SetupWizard(tk.Tk):
             # 5. Create Desktop shortcut
             self.create_shortcut(exe_dest)
             
-            messagebox.showinfo("Success", "YouTubeDownloader installed successfully!\nPlease restart Google Chrome or Microsoft Edge to activate the extension.")
+            messagebox.showinfo("Success", "YouTubeDownloader installed successfully!")
+            if messagebox.askyesno(
+                "Browser extension",
+                "Browsers don't allow silent extension installs, so one quick step is needed:\n\n"
+                "1. Turn ON 'Developer mode' (top-right) on the extensions page that opens.\n"
+                "2. Click 'Load unpacked' and select the 'extension' folder that opens next to it "
+                "(or drag the folder onto the page).\n\n"
+                "Open the extensions page now?"
+            ):
+                open_extension_setup(ext_dest)
             self.destroy()
         except Exception as e:
             messagebox.showerror("Error", f"Installation failed:\n{e}")
@@ -242,17 +292,16 @@ class SetupWizard(tk.Tk):
 
     def create_shortcut(self, target_exe):
         try:
-            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-            shortcut_path = os.path.join(desktop, "YouTubeDownloader.lnk")
+            shortcut_path = os.path.join(get_desktop_dir(), "YouTubeDownloader.lnk")
             vbs_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), "create_shortcut.vbs")
-            with open(vbs_path, "w") as f:
-                f.write(f'Set oWS = WScript.CreateObject("WScript.Shell")\n')
-                f.write(f'sLinkFile = "{shortcut_path}"\n')
-                f.write(f'Set oLink = oWS.CreateShortcut(sLinkFile)\n')
+            with open(vbs_path, "w", encoding="utf-16") as f:  # UTF-16 keeps non-ASCII paths intact
+                f.write('Set oWS = WScript.CreateObject("WScript.Shell")\n')
+                f.write(f'Set oLink = oWS.CreateShortcut("{shortcut_path}")\n')
                 f.write(f'oLink.TargetPath = "{target_exe}"\n')
                 f.write(f'oLink.WorkingDirectory = "{os.path.dirname(target_exe)}"\n')
-                f.write(f'oLink.Save\n')
-            os.system(f'cscript //nologo "{vbs_path}"')
+                f.write(f'oLink.IconLocation = "{target_exe}"\n')
+                f.write('oLink.Save\n')
+            subprocess.run(["cscript", "//nologo", vbs_path], creationflags=subprocess.CREATE_NO_WINDOW, check=False)
             os.remove(vbs_path)
         except Exception:
             pass

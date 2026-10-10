@@ -25,3 +25,6 @@ ENV/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Packaged copy of the extension folder
+extension.zip

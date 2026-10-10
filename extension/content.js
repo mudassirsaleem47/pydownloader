@@ -86,7 +86,8 @@ function injectOverlay() {
 }
 
 function triggerDownload(quality) {
-    const videoUrl = window.location.href;
+    const videoId = new URLSearchParams(window.location.search).get('v');
+    const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : window.location.href;
     const statusLabel = document.getElementById('yt-downloader-status-label');
 
     if (statusLabel) {
@@ -124,16 +125,31 @@ function triggerDownload(quality) {
         });
 }
 
-// Keep checking page mutation/routing
-const observer = new MutationObserver(() => {
-    if (window.location.pathname === '/watch') {
+function isWatchPage() {
+    return window.location.pathname === '/watch';
+}
+
+function updateOverlay() {
+    if (isWatchPage()) {
         injectOverlay();
+    } else {
+        const existing = document.getElementById('yt-python-downloader-overlay');
+        if (existing) existing.remove();
     }
+}
+
+// YouTube is a single-page app: react to its navigation events and (debounced) DOM changes
+let debounceTimer = null;
+const observer = new MutationObserver(() => {
+    if (debounceTimer) return;
+    debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        updateOverlay();
+    }, 300);
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
+window.addEventListener('yt-navigate-finish', updateOverlay);
 
 // Initial call
-if (window.location.pathname === '/watch') {
-    injectOverlay();
-}
+updateOverlay();
